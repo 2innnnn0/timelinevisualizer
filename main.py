@@ -73,79 +73,75 @@ def create_time_series(data, place_visits):
             }
         })
 
-    timestamped_geo_json = TimestampedGeoJson({
+    TimestampedGeoJson({
         'type': 'FeatureCollection',
         'features': features,
-    }, period='PT1H', add_last_point=True)
+    }, period='PT1H', add_last_point=True).add_to(m)
 
-    timestamped_geo_json.add_to(m)
     return m
 
-# Streamlit interface
-st.title("Google Timeline Data Visualizer")
+st.title("Geo Data Visualization")
 
-# Upload JSON file
-uploaded_file = st.file_uploader("Choose a JSON file", type="json")
+uploaded_files = st.file_uploader("Choose JSON files", type="json", accept_multiple_files=True)
 
-# Option to select visualization type
-vis_option = st.selectbox("Select Visualization", ["Heatmap", "Time series"])
+if uploaded_files:
+    all_activity_segments = []
+    all_place_visits = []
 
-if st.button("Submit"):
-    if uploaded_file is not None:
+    for uploaded_file in uploaded_files:
         try:
             data = json.load(uploaded_file)
-            
-            # Flattening the nested JSON structure for easier manipulation and analysis
             activity_segments = []
             place_visits = []
 
-            for obj in data['timelineObjects']:
-                if 'activitySegment' in obj:
-                    activity_segment = obj['activitySegment']
+            for item in data['timelineObjects']:
+                if 'activitySegment' in item:
+                    activity_segment = item['activitySegment']
                     activity_segments.append({
                         'startLatitude': activity_segment['startLocation']['latitudeE7'] / 1e7,
                         'startLongitude': activity_segment['startLocation']['longitudeE7'] / 1e7,
                         'endLatitude': activity_segment['endLocation']['latitudeE7'] / 1e7,
                         'endLongitude': activity_segment['endLocation']['longitudeE7'] / 1e7,
-                        'startTimestamp': activity_segment['duration']['startTimestamp'],
-                        'endTimestamp': activity_segment['duration']['endTimestamp'],
-                        'distance': activity_segment.get('distance', 'N/A'),
-                        'activityType': activity_segment['activityType'],
-                        'confidence': activity_segment['confidence'],
+                        'startTimestamp': pd.to_datetime(activity_segment['duration']['startTimestamp']),
+                        'endTimestamp': pd.to_datetime(activity_segment['duration']['endTimestamp']),
+                        'activityType': activity_segment.get('activityType', 'N/A'),
+                        'confidence': activity_segment.get('confidence', 'N/A'),
+                        'distance': activity_segment.get('distance', 'N/A')
                     })
-                elif 'placeVisit' in obj:
-                    place_visit = obj['placeVisit']
+                elif 'placeVisit' in item:
+                    place_visit = item['placeVisit']
                     place_visits.append({
                         'latitude': place_visit['location']['latitudeE7'] / 1e7,
                         'longitude': place_visit['location']['longitudeE7'] / 1e7,
-                        'placeId': place_visit['location']['placeId'],
-                        'address': place_visit['location']['address'],
+                        'address': place_visit['location'].get('address', 'N/A'),
                         'name': place_visit['location'].get('name', 'N/A'),
-                        'startTimestamp': place_visit['duration']['startTimestamp'],
-                        'endTimestamp': place_visit['duration']['endTimestamp'],
-                        'visitConfidence': place_visit['visitConfidence'],
+                        'startTimestamp': pd.to_datetime(place_visit['duration']['startTimestamp']),
+                        'endTimestamp': pd.to_datetime(place_visit['duration']['endTimestamp']),
+                        'visitConfidence': place_visit.get('visitConfidence', 'N/A')
                     })
 
-            activity_segments_df = pd.DataFrame(activity_segments)
-            place_visits_df = pd.DataFrame(place_visits)
-            activity_segments_df['startTimestamp'] = pd.to_datetime(activity_segments_df['startTimestamp'])
-            activity_segments_df['endTimestamp'] = pd.to_datetime(activity_segments_df['endTimestamp'])
-            place_visits_df['startTimestamp'] = pd.to_datetime(place_visits_df['startTimestamp'])
-            place_visits_df['endTimestamp'] = pd.to_datetime(place_visits_df['endTimestamp'])
+            all_activity_segments.extend(activity_segments)
+            all_place_visits.extend(place_visits)
 
+        except Exception as e:
+            st.error(f"Error processing file {uploaded_file.name}: {e}")
+
+    if all_activity_segments and all_place_visits:
+        activity_segments_df = pd.DataFrame(all_activity_segments)
+        place_visits_df = pd.DataFrame(all_place_visits)
+
+        vis_option = st.selectbox("Select visualization type", ["Heatmap", "Time series"])
+
+        if st.button('Submit'):
             if vis_option == "Heatmap":
                 heatmap = create_heatmap(activity_segments_df, place_visits_df)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmpfile:
                     heatmap.save(tmpfile.name)
-                    st.markdown(f"[Download the heatmap map](./{tmpfile.name})")
                     with open(tmpfile.name, 'r') as f:
                         components.html(f.read(), height=600)
             elif vis_option == "Time series":
                 time_series_map = create_time_series(activity_segments_df, place_visits_df)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmpfile:
                     time_series_map.save(tmpfile.name)
-                    st.markdown(f"[Download the timeline map](./{tmpfile.name})")
                     with open(tmpfile.name, 'r') as f:
                         components.html(f.read(), height=600)
-        except Exception as e:
-            st.error(f"Error processing file: {e}")
